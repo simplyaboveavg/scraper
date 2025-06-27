@@ -1,0 +1,166 @@
+# Scrapy settings for shopify_scraper project
+#
+# For simplicity, this file contains only settings considered important or
+# commonly used. You can find more settings consulting the documentation:
+#
+#     https://docs.scrapy.org/en/latest/topics/settings.html
+#     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
+#     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
+
+import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except (ImportError, OSError):
+    # Running in Scrapy Cloud or .env not found
+    pass
+
+BOT_NAME = "shopify_scraper"
+
+SPIDER_MODULES = ["shopify_scraper.spiders"]
+NEWSPIDER_MODULE = "shopify_scraper.spiders"
+
+# Completely disable robots.txt checking to avoid getting blocked
+ROBOTSTXT_OBEY = False
+
+# Configure maximum concurrent requests performed by Scrapy (default: 16)
+CONCURRENT_REQUESTS = 4
+
+# The download delay setting will honor only one of:
+CONCURRENT_REQUESTS_PER_DOMAIN = 1
+CONCURRENT_REQUESTS_PER_IP = 1
+
+# Disable cookies (enabled by default)
+COOKIES_ENABLED = False
+
+# Override the default request headers:
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Pragma": "no-cache",
+    "Cache-Control": "no-cache",
+    "DNT": "1",
+}
+
+# Retry settings
+RETRY_ENABLED = True
+RETRY_TIMES = 12
+RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429, 403, 520, 521, 522, 523, 524, 525, 526, 527, 530]
+RETRY_PRIORITY_ADJUST = -1
+
+# Custom retry delay settings (used by CustomRetryMiddleware)
+RETRY_DELAY_MIN = 10  # Minimum delay in seconds
+RETRY_DELAY_MAX = 60  # Maximum delay in seconds
+
+# Configure item pipelines
+ITEM_PIPELINES = {
+   "shopify_scraper.pipelines.ShopifyScraperPipeline": 300,
+   "shopify_scraper.pipelines.JsonLinesExportPipeline": 400,
+}
+
+# Enable and configure the AutoThrottle extension (disabled by default)
+AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 10
+AUTOTHROTTLE_MAX_DELAY = 120
+AUTOTHROTTLE_TARGET_CONCURRENCY = 0.5
+AUTOTHROTTLE_DEBUG = True
+
+# Enable and configure HTTP caching (disabled by default)
+HTTPCACHE_ENABLED = True
+HTTPCACHE_EXPIRATION_SECS = 86400  # 24 hours
+HTTPCACHE_DIR = "httpcache"
+HTTPCACHE_IGNORE_HTTP_CODES = [403, 429, 500, 503]
+HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
+
+# Set settings whose default value is deprecated to a future-proof value
+FEED_EXPORT_ENCODING = "utf-8"
+
+# S3 Feeds configuration
+FEEDS = {
+    's3://simplyaboveaverage-scrapy/raw-shopify/%(name)s-%(time)s.json': {
+        'format': 'jsonlines',
+        'encoding': 'utf8',
+        'overwrite': True,
+        'indent': None,
+        'ensure_ascii': False,
+        'newline': '\n'
+    }
+}
+
+# Add a random delay between requests
+RANDOMIZE_DOWNLOAD_DELAY = True
+
+# User Agent rotation
+USER_AGENT_LIST = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+]
+
+# Crawl in BFO order (breadth-first) to avoid hitting the same domain too frequently
+DEPTH_PRIORITY = 1
+SCHEDULER_DISK_QUEUE = 'scrapy.squeues.PickleFifoDiskQueue'
+SCHEDULER_MEMORY_QUEUE = 'scrapy.squeues.FifoMemoryQueue'
+
+# Download timeout
+DOWNLOAD_TIMEOUT = 60  # 60 seconds timeout
+
+# Disable redirect middleware to avoid following redirects that might lead to honeypots
+REDIRECT_ENABLED = False
+
+# Adjust log level
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+
+# Optional: Set a download delay if you want to be polite
+DOWNLOAD_DELAY = float(os.getenv('DOWNLOAD_DELAY', '1.0'))
+
+# =============================================================================
+# ZYTE API CONFIGURATION
+# =============================================================================
+
+# Get Zyte API key from environment variables
+ZYTE_API_KEY = os.getenv('ZYTE_API_KEY', '')
+
+# Use the addon approach (recommended)
+if ZYTE_API_KEY:
+    ADDONS = {
+        "scrapy_zyte_api.Addon": 500,
+    }
+    
+    # Default parameters for all Zyte API requests
+    ZYTE_API_DEFAULT_PARAMS = {
+        'httpResponseBody': True,
+        'geolocation': 'US',
+    }
+    
+    # Middleware configuration with Zyte API
+    DOWNLOADER_MIDDLEWARES = {
+        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
+        'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
+        'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
+        'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
+        'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
+        'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
+        'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
+    }
+    
+    print(f"Zyte API enabled with addon and transparent mode")
+else:
+    # Fallback configuration without Zyte API
+    DOWNLOADER_MIDDLEWARES = {
+        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
+        'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
+        'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
+        'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
+        'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
+        'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
+        'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
+    }
+    print("No Zyte API key found. Running without Zyte services.")
