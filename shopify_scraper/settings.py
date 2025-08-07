@@ -148,6 +148,14 @@ if ZYTE_API_KEY:
     # Ensure proper authentication (API key as username, empty password)
     ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
     
+    # Advanced Zyte API configuration
+    ZYTE_API_TRANSPARENT_MODE = False  # let Zyte handle anti-bot measures
+    ZYTE_API_BROWSER_HTML = True       # render JS like a browser
+    ZYTE_API_SESSION_MODE = 'persistent' # keep cookies/session between requests
+    ZYTE_API_REQUEST_HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    }
+    
     # Disable HTTP cache when using Zyte API (caches can interfere with proxying)
     HTTPCACHE_ENABLED = False
     
