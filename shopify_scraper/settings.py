@@ -130,6 +130,9 @@ ZYTE_API_KEY = os.getenv('ZYTE_API_KEY', '')
 
 # Use the addon approach (recommended)
 if ZYTE_API_KEY:
+    # For ScrapyCloud compatibility, don't set TWISTED_REACTOR at all
+    # ScrapyCloud uses EPollReactor by default, which works with Zyte API
+    
     ADDONS = {
         "scrapy_zyte_api.Addon": 500,
     }
@@ -139,6 +142,12 @@ if ZYTE_API_KEY:
         'httpResponseBody': True,
         'geolocation': 'US',
     }
+    
+    # Ensure proper authentication (API key as username, empty password)
+    ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
+    
+    # Force Zyte API to work with any reactor (including EPollReactor)
+    ZYTE_API_TRANSPARENT_MODE = True
     
     # Middleware configuration with Zyte API
     DOWNLOADER_MIDDLEWARES = {

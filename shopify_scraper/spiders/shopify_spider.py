@@ -174,8 +174,16 @@ class ShopifySpider(scrapy.Spider):
                 item['product_type'] = product.get('product_type')
                 item['tags'] = product.get('tags')
                 item['variants'] = product.get('variants')
-                item['images'] = product.get('images')
+                item['images'] = product.get('images')  # Keep original images array
                 item['body_html'] = product.get('body_html')
+                
+                # Extract up to 4 individual image URLs
+                images = product.get('images', [])
+                item['image_url'] = images[0].get('src') if len(images) > 0 else None
+                item['image_url_2'] = images[1].get('src') if len(images) > 1 else None
+                item['image_url_3'] = images[2].get('src') if len(images) > 2 else None
+                item['image_url_4'] = images[3].get('src') if len(images) > 3 else None
+                
                 yield item
 
             next_page = page + 1
