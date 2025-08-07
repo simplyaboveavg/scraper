@@ -110,7 +110,7 @@ SCHEDULER_DISK_QUEUE = 'scrapy.squeues.PickleFifoDiskQueue'
 SCHEDULER_MEMORY_QUEUE = 'scrapy.squeues.FifoMemoryQueue'
 
 # Download timeout
-DOWNLOAD_TIMEOUT = 60  # 60 seconds timeout
+DOWNLOAD_TIMEOUT = 90  # 90 seconds timeout
 
 # Disable redirect middleware to avoid following redirects that might lead to honeypots
 REDIRECT_ENABLED = False
@@ -130,8 +130,7 @@ ZYTE_API_KEY = os.getenv('ZYTE_API_KEY', '')
 
 # Use the addon approach (recommended)
 if ZYTE_API_KEY:
-    # For ScrapyCloud compatibility, don't set TWISTED_REACTOR at all
-    # ScrapyCloud uses EPollReactor by default, which works with Zyte API
+    # Reactor is configured in scrapy.cfg for EC2 deployment
     
     ADDONS = {
         "scrapy_zyte_api.Addon": 500,
@@ -146,21 +145,22 @@ if ZYTE_API_KEY:
     # Ensure proper authentication (API key as username, empty password)
     ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
     
-    # Force Zyte API to work with any reactor (including EPollReactor)
-    ZYTE_API_TRANSPARENT_MODE = True
+    # Disable HTTP cache when using Zyte API (caches can interfere with proxying)
+    HTTPCACHE_ENABLED = False
     
-    # Middleware configuration with Zyte API
+    # Middleware configuration with Zyte API (addon handles Zyte middlewares automatically)
     DOWNLOADER_MIDDLEWARES = {
-        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
         'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
         'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
         'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
         'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
         'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
         'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
+        # Don't use RandomUserAgentMiddleware with Zyte API (Zyte handles headers)
+        'shopify_scraper.middlewares.RandomUserAgentMiddleware': None,
     }
     
-    print(f"Zyte API enabled with addon and transparent mode")
+    print(f"Zyte API enabled with addon")
 else:
     # Fallback configuration without Zyte API
     DOWNLOADER_MIDDLEWARES = {
