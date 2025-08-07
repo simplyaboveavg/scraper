@@ -8,6 +8,9 @@
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
 import os
+import scrapy.utils.reactor
+scrapy.utils.reactor.install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
