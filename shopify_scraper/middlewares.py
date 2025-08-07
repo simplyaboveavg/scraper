@@ -81,16 +81,34 @@ class ShopifyScraperDownloaderMiddleware:
         if request.url.endswith('/robots.txt'):
             raise IgnoreRequest(f"Skipping robots.txt request for {request.url}")
 
-        # Add a random delay between requests
+        # Get store URL from request meta if available
+        store_url = request.meta.get('store_url', '')
+        
+        # Check if this store should be skipped due to failures
+        if hasattr(spider, 'should_skip_store') and store_url and spider.should_skip_store(store_url):
+            spider.logger.warning(f"[{store_url}] Middleware skipping request due to store failures")
+            raise IgnoreRequest(f"Skipping request for failed store: {store_url}")
+
+        # Add a more sophisticated delay system
         # Use a more variable delay to avoid detection patterns
         delay_factor = random.random()  # Between 0 and 1
         
-        if delay_factor < 0.7:  # 70% of requests get a short delay
-            delay = random.uniform(1, 5)
-        elif delay_factor < 0.9:  # 20% get a medium delay
-            delay = random.uniform(5, 10)
-        else:  # 10% get a longer delay
-            delay = random.uniform(10, 15)
+        # More conservative delays for better rate limiting
+        if delay_factor < 0.6:  # 60% of requests get a short delay
+            delay = random.uniform(2, 6)
+        elif delay_factor < 0.85:  # 25% get a medium delay
+            delay = random.uniform(6, 12)
+        else:  # 15% get a longer delay
+            delay = random.uniform(12, 20)
+            
+        # Add extra delay for rate-limited stores
+        if store_url and hasattr(spider, 'store_failures'):
+            failure_count = spider.store_failures.get(store_url, 0)
+            if failure_count > 0:
+                # Add exponential backoff based on failure count
+                extra_delay = min(failure_count * 5, 30)  # Max 30 seconds extra
+                delay += extra_delay
+                spider.logger.info(f"[{store_url}] Adding {extra_delay}s extra delay due to {failure_count} failures")
             
         time.sleep(delay)
         

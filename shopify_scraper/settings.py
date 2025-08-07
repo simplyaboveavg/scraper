@@ -27,9 +27,11 @@ NEWSPIDER_MODULE = "shopify_scraper.spiders"
 ROBOTSTXT_OBEY = False
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 4
+# Reduced for better rate limiting compliance
+CONCURRENT_REQUESTS = 2
 
 # The download delay setting will honor only one of:
+# Very conservative to avoid rate limiting
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 CONCURRENT_REQUESTS_PER_IP = 1
 
@@ -67,11 +69,16 @@ ITEM_PIPELINES = {
 }
 
 # Enable and configure the AutoThrottle extension (disabled by default)
+# More aggressive throttling to avoid rate limits
 AUTOTHROTTLE_ENABLED = True
-AUTOTHROTTLE_START_DELAY = 10
-AUTOTHROTTLE_MAX_DELAY = 120
-AUTOTHROTTLE_TARGET_CONCURRENCY = 0.5
+AUTOTHROTTLE_START_DELAY = 15  # Start with longer delays
+AUTOTHROTTLE_MAX_DELAY = 180   # Allow longer max delays
+AUTOTHROTTLE_TARGET_CONCURRENCY = 0.3  # Lower concurrency target
 AUTOTHROTTLE_DEBUG = True
+
+# Additional rate limiting settings
+DOWNLOAD_DELAY = float(os.getenv('DOWNLOAD_DELAY', '2.0'))  # Increased base delay
+RANDOMIZE_DOWNLOAD_DELAY = True  # Add randomization to avoid patterns
 
 # Enable and configure HTTP caching (disabled by default)
 HTTPCACHE_ENABLED = True
@@ -112,8 +119,8 @@ DEPTH_PRIORITY = 1
 SCHEDULER_DISK_QUEUE = 'scrapy.squeues.PickleFifoDiskQueue'
 SCHEDULER_MEMORY_QUEUE = 'scrapy.squeues.FifoMemoryQueue'
 
-# Download timeout
-DOWNLOAD_TIMEOUT = 90  # 90 seconds timeout
+# Download timeout - increased for browser mode requests
+DOWNLOAD_TIMEOUT = 120  # 120 seconds timeout (browser mode can be slower)
 
 # Disable redirect middleware to avoid following redirects that might lead to honeypots
 REDIRECT_ENABLED = False
@@ -121,8 +128,39 @@ REDIRECT_ENABLED = False
 # Adjust log level
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
-# Optional: Set a download delay if you want to be polite
-DOWNLOAD_DELAY = float(os.getenv('DOWNLOAD_DELAY', '1.0'))
+# =============================================================================
+# HTML FALLBACK AND BROWSER MODE SETTINGS
+# =============================================================================
+
+# Enable cookies for HTML collection pages (some stores require session cookies)
+# This will be overridden per-request when needed
+COOKIES_ENABLED = False  # Keep disabled by default, enable per-request for HTML fallback
+
+# Additional headers for HTML collection page requests
+HTML_COLLECTION_HEADERS = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+}
+
+# Dupefilter settings - allow duplicate URLs for HTML fallback
+DUPEFILTER_CLASS = 'scrapy.dupefilters.RFPDupeFilter'
+DUPEFILTER_DEBUG = False
+
+# Memory usage optimization for large HTML pages
+MEMUSAGE_ENABLED = True
+MEMUSAGE_LIMIT_MB = 2048  # 2GB limit
+MEMUSAGE_WARNING_MB = 1536  # Warning at 1.5GB
+
+# Stats collection for monitoring HTML vs JSON success rates
+STATS_CLASS = 'scrapy.statscollectors.MemoryStatsCollector'
 
 # =============================================================================
 # ZYTE API CONFIGURATION
@@ -139,18 +177,20 @@ if ZYTE_API_KEY:
         "scrapy_zyte_api.Addon": 500,
     }
     
-    # Default parameters for all Zyte API requests
+    # Default parameters for all Zyte API requests (lightweight by default)
     ZYTE_API_DEFAULT_PARAMS = {
         'httpResponseBody': True,
         'geolocation': 'US',
+        # Note: browserHtml is NOT enabled by default - only when explicitly requested
+        # This saves costs by using lightweight requests unless browser mode is needed
     }
     
     # Ensure proper authentication (API key as username, empty password)
     ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
     
     # Advanced Zyte API configuration
-    ZYTE_API_TRANSPARENT_MODE = False  # let Zyte handle anti-bot measures
-    ZYTE_API_BROWSER_HTML = True       # render JS like a browser
+    ZYTE_API_TRANSPARENT_MODE = True   # Enable transparent mode for better compatibility
+    # ZYTE_API_BROWSER_HTML removed from global settings - controlled per request
     ZYTE_API_SESSION_MODE = 'persistent' # keep cookies/session between requests
     ZYTE_API_REQUEST_HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
