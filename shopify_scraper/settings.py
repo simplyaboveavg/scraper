@@ -8,8 +8,8 @@
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
 import os
-import scrapy.utils.reactor
-scrapy.utils.reactor.install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+#import scrapy.utils.reactor
+#scrapy.utils.reactor.install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
 
 try:
     from dotenv import load_dotenv
@@ -169,49 +169,43 @@ STATS_CLASS = 'scrapy.statscollectors.MemoryStatsCollector'
 # Get Zyte API key from environment variables
 ZYTE_API_KEY = os.getenv('ZYTE_API_KEY', '')
 
-# Use the addon approach (recommended)
+# Configure Zyte API but don't enable addon globally
+# Zyte API will only be used for requests that explicitly include 'zyte_api' in meta
 if ZYTE_API_KEY:
-    # Reactor is configured in scrapy.cfg for EC2 deployment
+    # Store Zyte API configuration for selective use
+    ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
     
-    ADDONS = {
-        "scrapy_zyte_api.Addon": 500,
-    }
-    
-    # Default parameters for all Zyte API requests (lightweight by default)
+    # Default parameters for Zyte API requests (when explicitly requested)
     ZYTE_API_DEFAULT_PARAMS = {
         'httpResponseBody': True,
         'geolocation': 'US',
-        # Note: browserHtml is NOT enabled by default - only when explicitly requested
-        # This saves costs by using lightweight requests unless browser mode is needed
+        # browserHtml will be added per-request when needed
     }
     
-    # Ensure proper authentication (API key as username, empty password)
-    ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
-    
     # Advanced Zyte API configuration
-    ZYTE_API_TRANSPARENT_MODE = True   # Enable transparent mode for better compatibility
-    # ZYTE_API_BROWSER_HTML removed from global settings - controlled per request
-    ZYTE_API_SESSION_MODE = 'persistent' # keep cookies/session between requests
+    ZYTE_API_TRANSPARENT_MODE = True
+    ZYTE_API_SESSION_MODE = 'persistent'
     ZYTE_API_REQUEST_HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     }
     
-    # Disable HTTP cache when using Zyte API (caches can interfere with proxying)
-    HTTPCACHE_ENABLED = False
+    # Enable Zyte API addon only when needed
+    ADDONS = {
+        "scrapy_zyte_api.Addon": 500,
+    }
     
-    # Middleware configuration with Zyte API (addon handles Zyte middlewares automatically)
+    # Middleware configuration - use normal scrapy middlewares by default
     DOWNLOADER_MIDDLEWARES = {
+        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
         'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
         'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
         'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
         'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
         'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
         'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
-        # Don't use RandomUserAgentMiddleware with Zyte API (Zyte handles headers)
-        'shopify_scraper.middlewares.RandomUserAgentMiddleware': None,
     }
     
-    print(f"Zyte API enabled with addon")
+    print(f"Zyte API configured for selective use (not enabled globally)")
 else:
     # Fallback configuration without Zyte API
     DOWNLOADER_MIDDLEWARES = {

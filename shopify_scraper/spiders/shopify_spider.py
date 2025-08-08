@@ -194,30 +194,34 @@ class ShopifySpider(scrapy.Spider):
             return
 
         store_url = self.current_batch[0]
-        self.logger.info(f"Starting with store: {store_url} (JSON first, HTML fallback on hard errors)")
+        phase_msg = "BROWSER MODE" if self.browser_mode_phase else "NORMAL SCRAPY"
+        self.logger.info(f"Starting with store: {store_url} ({phase_msg})")
 
-        page = 1
-        full_url = f"{store_url}/products.json?page={page}&limit=250"
+        if self.browser_mode_phase:
+            # Phase 2: Start with HTML collection page using Zyte API
+            yield self._html_listing_request(store_url, 0)
+        else:
+            # Phase 1: Start with normal Scrapy JSON request
+            page = 1
+            full_url = f"{store_url}/products.json?page={page}&limit=250"
 
-        # Always start with lightweight JSON request (no browser mode)
-        # Hard errors (403/404/429) will automatically trigger HTML fallback
-        request_meta = {
-            'dont_retry': False,
-            'max_retry_times': 5,
-            'store_url': store_url,
-        }
-
-        yield scrapy.Request(
-            url=full_url,
-            callback=self.parse,
-            cb_kwargs={
+            request_meta = {
+                'dont_retry': False,
+                'max_retry_times': 5,
                 'store_url': store_url,
-                'page': page,
-                'batch_index': 0
-            },
-            meta=request_meta,
-            dont_filter=True
-        )
+            }
+
+            yield scrapy.Request(
+                url=full_url,
+                callback=self.parse,
+                cb_kwargs={
+                    'store_url': store_url,
+                    'page': page,
+                    'batch_index': 0
+                },
+                meta=request_meta,
+                dont_filter=True
+            )
 
     def sleep(self, seconds):
         if seconds > 45:
@@ -340,29 +344,18 @@ class ShopifySpider(scrapy.Spider):
                 elif response.status == 404:
                     error_msg += " (Not Found - may not be a Shopify store)"
                 
-                # Check if this is a hard error that should immediately trigger browser mode
+                # Record failure and move to next store
+                # Hard errors will be retried with Zyte API in Phase 2
                 if response.status in self.HARD_ERROR_STATUSES:
                     self.record_store_failure(store_url, error_msg, hard=True)
-                    
-                    # Try HTML path immediately instead of moving on (if not already tried)
-                    if not response.meta.get("_html_fallback_tried"):
-                        self.logger.info(f"[{store_url}] Hard error {response.status}, trying browser mode immediately")
-                        yield self._html_listing_request(store_url, batch_index)
-                        return
-                    
-                    # If HTML already tried and failed, move on
-                    self.logger.warning(f"[{store_url}] Browser mode also failed, moving to next store")
-                    next_req = self.process_next_store(batch_index)
-                    if next_req:
-                        next_req.addCallback(self.schedule_next_request)
-                    return
+                    self.logger.info(f"[{store_url}] Hard error {response.status}, will retry with Zyte API in Phase 2")
                 else:
-                    # Soft error, record normally
                     self.record_store_failure(store_url, error_msg)
-                    next_req = self.process_next_store(batch_index)
-                    if next_req:
-                        next_req.addCallback(self.schedule_next_request)
-                    return
+                
+                next_req = self.process_next_store(batch_index)
+                if next_req:
+                    next_req.addCallback(self.schedule_next_request)
+                return
 
             data = response.json()
             products = data.get('products', [])
@@ -509,28 +502,32 @@ class ShopifySpider(scrapy.Spider):
                 return self.start_next_store(batch_index + 1)  # Skip to next store
             
             store_delay = random.uniform(self.INTER_STORE_DELAY_MIN, self.INTER_STORE_DELAY_MAX)
-            self.logger.info(f"Moving to next store: {store_url}. Waiting {store_delay:.2f}s...")
+            phase_msg = "BROWSER MODE" if self.browser_mode_phase else "NORMAL SCRAPY"
+            self.logger.info(f"Moving to next store: {store_url} ({phase_msg}). Waiting {store_delay:.2f}s...")
 
             def create_request(_):
-                # Always start with lightweight JSON request (no browser mode)
-                # Hard errors (403/404/429) will automatically trigger HTML fallback
-                request_meta = {
-                    'dont_retry': False,
-                    'max_retry_times': 5,
-                    'store_url': store_url,  # Pass store_url in meta for middleware
-                }
-                
-                return scrapy.Request(
-                    url=f"{store_url}/products.json?page=1&limit=250",
-                    callback=self.parse,
-                    cb_kwargs={
-                        'store_url': store_url,
-                        'page': 1,
-                        'batch_index': batch_index
-                    },
-                    meta=request_meta,
-                    dont_filter=True
-                )
+                if self.browser_mode_phase:
+                    # Phase 2: Use HTML collection page with Zyte API browser mode
+                    return self._html_listing_request(store_url, batch_index)
+                else:
+                    # Phase 1: Use normal Scrapy with JSON endpoint
+                    request_meta = {
+                        'dont_retry': False,
+                        'max_retry_times': 5,
+                        'store_url': store_url,  # Pass store_url in meta for middleware
+                    }
+                    
+                    return scrapy.Request(
+                        url=f"{store_url}/products.json?page=1&limit=250",
+                        callback=self.parse,
+                        cb_kwargs={
+                            'store_url': store_url,
+                            'page': 1,
+                            'batch_index': batch_index
+                        },
+                        meta=request_meta,
+                        dont_filter=True
+                    )
 
             d = self.sleep(store_delay)
             d.addCallback(create_request).addCallback(self.schedule_next_request)
