@@ -1,5 +1,3 @@
 project: 804888
 requirements:
   file: requirements.txt
-stacks:
-  default: scrapy:2.11-py39

@@ -34,3 +34,6 @@ Thumbs.db
 
 # Project specific
 *.json
+
+# Large generated store exports (keep local only)
+store_exports/

@@ -393,3 +393,57 @@ class CustomRetryMiddleware(RetryMiddleware):
                 return new_request
         
         return None
+
+
+class RateLimitMiddleware:
+    """Custom middleware to handle rate limiting with exponential backoff"""
+    
+    def __init__(self):
+        self.rate_limited_domains = {}
+        self.last_request_time = {}
+    
+    def process_request(self, request, spider):
+        """Add delays for rate-limited domains"""
+        domain = request.url.split('/')[2]
+        current_time = time.time()
+        
+        # Check if domain was recently rate limited
+        if domain in self.rate_limited_domains:
+            last_rate_limit = self.rate_limited_domains[domain]
+            time_since_limit = current_time - last_rate_limit
+            
+            # Wait longer if recently rate limited
+            if time_since_limit < 300:  # 5 minutes
+                wait_time = min(60, 10 + (time_since_limit / 60) * 30)
+                spider.logger.info(f"⏳ Rate limited domain {domain}, waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+        
+        # Add delay between requests to same domain
+        if domain in self.last_request_time:
+            time_since_last = current_time - self.last_request_time[domain]
+            if time_since_last < 10:  # Minimum 10 seconds between requests
+                wait_time = 10 - time_since_last
+                spider.logger.info(f"⏳ Domain {domain} cooldown, waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+        
+        self.last_request_time[domain] = time.time()
+        return None
+    
+    def process_response(self, request, response, spider):
+        """Handle rate limiting responses"""
+        if response.status == 429:
+            domain = request.url.split('/')[2]
+            self.rate_limited_domains[domain] = time.time()
+            spider.logger.info(f"🚨 Rate limited by {domain}, marking for longer delays")
+            
+            # Add exponential backoff delay
+            retry_after = response.headers.get('Retry-After')
+            if retry_after:
+                try:
+                    delay = int(retry_after)
+                    spider.logger.info(f"⏳ Server requested {delay}s delay for {domain}")
+                    time.sleep(delay)
+                except ValueError:
+                    pass
+        
+        return response

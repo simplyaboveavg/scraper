@@ -1,192 +1,169 @@
 # Shopify Scraper
 
-A robust, scalable Scrapy spider for scraping product data from multiple Shopify stores while respecting rate limits.
+A production-ready Shopify store scraper with advanced rate limiting protection, comprehensive reporting, and enterprise-grade features.
 
-## Features
+## 📁 Project Structure
 
-- **Multi-store support**: Scrape hundreds of Shopify stores in a single run
-- **Batch processing**: Process stores in configurable batches to avoid overwhelming servers
-- **Rate limiting**: Intelligent delays between requests to avoid getting blocked
-- **Progress tracking**: Resume scraping from where you left off if interrupted
-- **Configurable**: Adjust batch sizes, delays, and other parameters via command line
-- **Robust error handling**: Automatically retry failed requests with exponential backoff
-- **Non-blocking**: Uses Twisted's asynchronous architecture for efficient scraping
+```
+shopify_scraper/
+├── shopify_scraper/          # Main scraper package
+│   ├── spiders/              # Scrapy spiders
+│   │   └── shopify_spider.py # Main spider with hardcoded stores
+│   ├── items.py              # Data models with price extraction
+│   ├── pipelines.py          # Data processing & S3 export
+│   ├── middlewares.py        # Custom anti-blocking middlewares
+│   └── settings.py           # Optimized Scrapy settings
+├── store_filter/             # Store filtering utilities
+│   └── filter_shopify_stores.py
+├── data/                     # Data files
+│   ├── master_store_list.txt # Master store list (EDIT THIS)
+│   ├── shopify_stores.json   # Filtered Shopify stores
+│   └── non_shopify_stores.json
+├── update_spider_stores.py   # Update hardcoded stores in spider
+├── generate_scrapycloud_args.py # Generate ScrapyCloud arguments
+├── store_exports/            # Local exports
+├── json_exports/             # JSON exports
+└── venv/                     # Virtual environment
+```
 
-## Installation
+## 🚀 Quick Start
 
-1. Clone the repository:
+### 1. Setup Environment
 ```bash
-git clone https://github.com/yourusername/shopify_scraper.git
 cd shopify_scraper
+source venv/bin/activate
 ```
 
-2. Install dependencies:
+### 2. Update Store List (IMPORTANT!)
+**⚠️ If you modify `data/master_store_list.txt`, you MUST rerun the filtering script:**
+
 ```bash
-pip install -r requirements.txt
+# After editing master_store_list.txt, run:
+python store_filter/filter_shopify_stores.py
 ```
 
-## Usage
+This ensures `data/shopify_stores.json` reflects your changes (additions/deletions).
 
-### Basic Usage
-
-To run the scraper with default settings:
-
+### 3. Filter Shopify Stores
 ```bash
-scrapy crawl shopify_multi
+python store_filter/filter_shopify_stores.py
 ```
 
-This will load store URLs from `store_filter/shopify_stores.json` and process them in batches of 10.
-
-### Command Line Options
-
-The scraper supports several command line options:
-
-- `store_url`: Scrape a single store
-- `batch_size`: Number of stores to process in each batch (default: 10)
-- `resume`: Resume scraping from where you left off
-- `stores_file`: Path to a JSON file containing store URLs
-
-Examples:
-
+### 4. Run Scraper
 ```bash
-# Scrape a single store
+# Single store test
 scrapy crawl shopify_multi -a store_url=https://example.com
 
-# Process stores in batches of 5
-scrapy crawl shopify_multi -a batch_size=5
+# All stores (hardcoded in spider)
+scrapy crawl shopify_multi
 
-# Resume a previously interrupted scrape
-scrapy crawl shopify_multi -a resume=true
+# With custom store file (local development)
+scrapy crawl shopify_multi -a stores_file=path/to/stores.json
 
-# Use a custom stores file
-scrapy crawl shopify_multi -a stores_file=my_stores.json
-
-# Combine options
-scrapy crawl shopify_multi -a batch_size=20 -a resume=true -a stores_file=my_stores.json
+# Deploy to ScrapyCloud
+shub deploy
 ```
+
+## 📊 Data Output
+
+- **Format**: JSON Lines (.jsonl)
+- **Location**: S3 bucket `s3://simplyaboveaverage-scrapy/raw-shopify/`
+- **Fields**: 
+  - **Basic**: id, title, handle, vendor, product_type, tags, variants, images, body_html, product_url
+  - **Images**: image_url, image_url_2, image_url_3, image_url_4 (up to 4 images)
+  - **Pricing**: price_min, price_max, compare_at_price_min, compare_at_price_max
+  - **Metadata**: store, scrape_timestamp
+
+## 📈 Comprehensive Reporting
+
+The scraper generates detailed reports including:
+- **Store Status**: Completed, failed, pending stores
+- **Product Counts**: Total products per store
+- **Data Quality**: Missing images, variants, prices
+- **Performance**: Duration, success rates, error details
+- **Retry Files**: Auto-generated `failed_stores_retry.json` for easy retry
+
+## 🔧 Configuration
 
 ### Store List Format
-
-The scraper can load store URLs from a JSON file in either of these formats:
-
-1. Array format:
-```json
-[
-  "store1.com",
-  "store2.com",
-  "store3.com"
-]
-```
-
-2. Object format:
 ```json
 {
   "stores": [
     "store1.com",
-    "store2.com",
-    "store3.com"
+    "store2.com"
   ]
 }
 ```
 
-URLs can be provided with or without the `https://` prefix. The scraper will automatically add it if missing.
+### Environment Variables
+- `LOG_LEVEL`: Set logging level (INFO, DEBUG, etc.)
 
-## Handling Rate Limits
+## 🚀 Enterprise Features
 
-The scraper implements several strategies to avoid hitting rate limits:
+- ✅ **Advanced Rate Limiting**: Custom middleware with exponential backoff
+- ✅ **Memory Management**: Prevents crashes with 950MB limit monitoring
+- ✅ **User Agent Rotation**: 5 different user agents to avoid detection
+- ✅ **Comprehensive Tracking**: Real-time store status and product counting
+- ✅ **Data Quality Monitoring**: Tracks missing images, variants, prices
+- ✅ **Automatic Retry System**: Failed stores saved for easy retry
+- ✅ **S3 Export**: Direct cloud storage integration
+- ✅ **Store Filtering**: Automatic Shopify store identification
+- ✅ **Detailed Reporting**: JSON reports with full scrape analytics
+- ✅ **Price Extraction**: Min/max pricing across variants
+- ✅ **No Zyte API**: Cost-effective, no external API dependencies
 
-1. **Batch processing**: Stores are processed in small batches (default: 10)
-2. **Inter-store delays**: Waits 60-120 seconds between stores
-3. **Inter-batch delays**: Waits 5-10 minutes between batches
-4. **Page delays**: Waits 2-5 seconds between pages of the same store
-5. **Exponential backoff**: Automatically increases wait time after encountering errors
-6. **Random user agents**: Rotates through a list of realistic user agents
-7. **Custom retry middleware**: Intelligently handles rate limit responses
+## 🛠️ Development
 
-## ScrapyCloud Deployment
+### Adding/Removing Stores
+1. **Edit** `data/master_store_list.txt` (add/remove domains)
+2. **⚠️ IMPORTANT**: Run `python store_filter/filter_shopify_stores.py`
+3. **Update spider**: Run `python update_spider_stores.py`
+4. **Deploy**: Run `shub deploy`
 
-To deploy to ScrapyCloud:
+### Custom Settings
+Modify `shopify_scraper/settings.py` for:
+- **Rate Limiting**: `DOWNLOAD_DELAY`, `CONCURRENT_REQUESTS`
+- **Memory Management**: `MEMUSAGE_LIMIT_MB`, `MEMUSAGE_WARNING_MB`
+- **User Agents**: `USER_AGENT_LIST`
+- **Retry Logic**: `RETRY_TIMES`, `RETRY_DELAY_MIN/MAX`
+- **S3 Export**: `FEEDS` configuration
 
-1. Make sure you have the Scrapinghub command line tool:
+### Workflow
+```
+1. Edit master_store_list.txt
+2. Run filter_shopify_stores.py  ← CRITICAL STEP
+3. Run update_spider_stores.py   ← NEW STEP
+4. Test with single store
+5. Deploy to ScrapyCloud
+6. Run full production scrape
+```
+
+## 🔧 ScrapyCloud Deployment
+
+### Hardcoded Stores Approach
+The spider uses **hardcoded stores** for ScrapyCloud deployment to avoid file path issues:
+
+- **✅ Reliable**: No file dependencies on ScrapyCloud
+- **✅ Automatic**: All 52 stores loaded automatically
+- **✅ No Arguments**: Run spider with no arguments needed
+- **✅ Easy Updates**: Use `update_spider_stores.py` to sync changes
+
+### Helper Scripts
 ```bash
-pip install shub
+# Generate ScrapyCloud arguments (alternative approach)
+python generate_scrapycloud_args.py
+
+# Update spider with latest stores
+python update_spider_stores.py
 ```
 
-2. Login to your ScrapyCloud account:
-```bash
-shub login
-```
+## 📝 Technical Notes
 
-3. Deploy the project:
-```bash
-shub deploy
-```
-
-4. Run the spider on ScrapyCloud with custom settings:
-```bash
-shub schedule shopify_multi -a batch_size=20 -a resume=true
-```
-
-## Filtering Shopify Stores
-
-The repository includes a utility script to filter a list of domains and identify which ones are Shopify stores:
-
-```bash
-cd store_filter
-python filter_shopify_stores.py
-```
-
-This will read domains from `master_store_list.txt` and output two files:
-- `shopify_stores.json`: Contains domains that are Shopify stores
-- `non_shopify_stores.json`: Contains domains that are not Shopify stores
-
-## Output
-
-The scraper outputs product data in JSON Lines format. Each line contains a complete product record with the following fields:
-
-- `store`: The store URL
-- `id`: Product ID
-- `title`: Product title
-- `handle`: Product handle (URL slug)
-- `vendor`: Product vendor
-- `product_type`: Product type/category
-- `tags`: Product tags
-- `variants`: Array of product variants (sizes, colors, etc.)
-- `images`: Array of product images
-- `body_html`: Product description HTML
-
-## Troubleshooting
-
-### Rate Limiting
-
-If you're still experiencing rate limiting issues:
-
-1. Increase the delay parameters in the spider:
-```python
-INTER_STORE_DELAY_MIN = 120  # Increase from 60 to 120
-INTER_STORE_DELAY_MAX = 240  # Increase from 120 to 240
-INTER_BATCH_DELAY_MIN = 600  # Increase from 300 to 600
-INTER_BATCH_DELAY_MAX = 1200  # Increase from 600 to 1200
-```
-
-2. Decrease the batch size:
-```bash
-scrapy crawl shopify_multi -a batch_size=5
-```
-
-3. Consider using proxies by adding them to the `ROTATING_PROXIES_LIST` in `settings.py`
-
-### Memory Issues
-
-If you encounter memory issues with large datasets:
-
-1. Enable item pipelines to process and export items immediately
-2. Reduce the batch size
-3. Use the `JOBDIR` setting to enable disk-based request queues:
-```bash
-scrapy crawl shopify_multi -s JOBDIR=crawls/shopify_multi
-```
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- **API**: Uses Shopify's public JSON API (`/products.json`)
+- **No Browser**: No browser automation required
+- **Pagination**: Handles pagination automatically (250 products/page)
+- **Images**: Extracts up to 4 product images per item
+- **Rate Limiting**: Custom middleware prevents 429 errors
+- **Memory**: Monitors usage to prevent crashes
+- **Reporting**: Generates comprehensive JSON reports
+- **ScrapyCloud**: Hardcoded stores for reliable cloud deployment

@@ -12,8 +12,9 @@ class ShopifyProductItem(scrapy.Item):
     title = scrapy.Field()
     handle = scrapy.Field()
     vendor = scrapy.Field()
+    vendor_clean = scrapy.Field()  # Clean vendor name extracted from URL
     product_type = scrapy.Field()
-    tags = scrapy.Field()
+    # tags = scrapy.Field()  # Removed - not used in downstream processing
     variants = scrapy.Field()
     images = scrapy.Field()  # Keep original images array for compatibility
     body_html = scrapy.Field()
@@ -24,3 +25,5 @@ class ShopifyProductItem(scrapy.Item):
     image_url_2 = scrapy.Field()  # Second image
     image_url_3 = scrapy.Field()  # Third image
     image_url_4 = scrapy.Field()  # Fourth image
+    
+    # Price fields removed - using individual variant prices in flatten_lambda instead

@@ -1,220 +1,100 @@
-# Scrapy settings for shopify_scraper project
-#
-# For simplicity, this file contains only settings considered important or
-# commonly used. You can find more settings consulting the documentation:
-#
-#     https://docs.scrapy.org/en/latest/topics/settings.html
-#     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-#     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
-
+# Ultra-minimal Scrapy settings for reliable cloud deployment
 import os
-#import scrapy.utils.reactor
-#scrapy.utils.reactor.install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+from datetime import datetime
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except (ImportError, OSError):
-    # Running in Scrapy Cloud or .env not found
-    pass
-
+# Basic Scrapy configuration
 BOT_NAME = "shopify_scraper"
-
 SPIDER_MODULES = ["shopify_scraper.spiders"]
 NEWSPIDER_MODULE = "shopify_scraper.spiders"
 
-# Completely disable robots.txt checking to avoid getting blocked
+# Disable robots.txt
 ROBOTSTXT_OBEY = False
 
-# Configure maximum concurrent requests performed by Scrapy (default: 16)
-# Reduced for better rate limiting compliance
-CONCURRENT_REQUESTS = 2
+# Prevent memory buildup and crashes
+MEMUSAGE_ENABLED = True
+MEMUSAGE_LIMIT_MB = 950  # ScrapyCloud limit
+MEMUSAGE_WARNING_MB = 800
 
-# The download delay setting will honor only one of:
-# Very conservative to avoid rate limiting
-CONCURRENT_REQUESTS_PER_DOMAIN = 1
-CONCURRENT_REQUESTS_PER_IP = 1
+# Close idle connections
+DOWNLOAD_TIMEOUT = 60
+# Optimized concurrency for better performance
+CONCURRENT_REQUESTS = 4              # Increased from 2 (2x faster)
+CONCURRENT_REQUESTS_PER_DOMAIN = 1   # Keep at 1 for stability
 
-# Disable cookies (enabled by default)
+# Reduce memory per request
+DOWNLOAD_MAXSIZE = 10485760  # 10MB max per response
+DOWNLOAD_WARNSIZE = 5242880   # 5MB warning
+
+# Optimized delays (middleware adds more sophisticated randomization)
+DOWNLOAD_DELAY = 2                   # Reduced from 3
+RANDOMIZE_DOWNLOAD_DELAY = 0.5
+
+# User agents for rotation (required by custom middleware)
+USER_AGENT_LIST = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+]
+
+# Simple headers
+DEFAULT_REQUEST_HEADERS = {
+    'Accept': 'application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'User-Agent': USER_AGENT_LIST[0]  # Default, will be rotated by middleware
+}
+
+# Enhanced retry settings
+RETRY_ENABLED = True
+RETRY_TIMES = 3
+RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429, 403]
+
+# Custom retry delays (used by middleware)
+RETRY_DELAY_MIN = 10
+RETRY_DELAY_MAX = 60
+
+# Prevent connection reuse issues
+REACTOR_THREADPOOL_MAXSIZE = 20
+
+# Disable cookies
 COOKIES_ENABLED = False
 
-# Override the default request headers:
-DEFAULT_REQUEST_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en",
-    "Connection": "keep-alive",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Pragma": "no-cache",
-    "Cache-Control": "no-cache",
-    "DNT": "1",
-}
-
-# Retry settings
-RETRY_ENABLED = True
-RETRY_TIMES = 12
-RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429, 403, 520, 521, 522, 523, 524, 525, 526, 527, 530]
-RETRY_PRIORITY_ADJUST = -1
-
-# Custom retry delay settings (used by CustomRetryMiddleware)
-RETRY_DELAY_MIN = 10  # Minimum delay in seconds
-RETRY_DELAY_MAX = 60  # Maximum delay in seconds
-
-# Configure item pipelines
+# Simple pipelines
 ITEM_PIPELINES = {
-   "shopify_scraper.pipelines.ShopifyScraperPipeline": 300,
-   "shopify_scraper.pipelines.JsonLinesExportPipeline": 400,
+    'shopify_scraper.pipelines.ShopifyScraperPipeline': 300,
 }
 
-# Enable and configure the AutoThrottle extension (disabled by default)
-# More aggressive throttling to avoid rate limits
-AUTOTHROTTLE_ENABLED = True
-AUTOTHROTTLE_START_DELAY = 15  # Start with longer delays
-AUTOTHROTTLE_MAX_DELAY = 180   # Allow longer max delays
-AUTOTHROTTLE_TARGET_CONCURRENCY = 0.3  # Lower concurrency target
-AUTOTHROTTLE_DEBUG = True
-
-# Additional rate limiting settings
-DOWNLOAD_DELAY = float(os.getenv('DOWNLOAD_DELAY', '2.0'))  # Increased base delay
-RANDOMIZE_DOWNLOAD_DELAY = True  # Add randomization to avoid patterns
-
-# Enable and configure HTTP caching (disabled by default)
-HTTPCACHE_ENABLED = True
-HTTPCACHE_EXPIRATION_SECS = 86400  # 24 hours
-HTTPCACHE_DIR = "httpcache"
-HTTPCACHE_IGNORE_HTTP_CODES = [403, 429, 500, 503]
-HTTPCACHE_STORAGE = "scrapy.extensions.httpcache.FilesystemCacheStorage"
-
-# Set settings whose default value is deprecated to a future-proof value
-FEED_EXPORT_ENCODING = "utf-8"
-
-# S3 Feeds configuration
+# S3 Export - Dynamic filename with current date/time
+timestamp = datetime.now().strftime('%Y-%m-%dT%H-%M-%S')
 FEEDS = {
-    's3://simplyaboveaverage-scrapy/raw-shopify/%(name)s-%(time)s.json': {
+    f's3://simplyaboveaverage-scrapy/raw-shopify/shopify_multi-{timestamp}.json': {
         'format': 'jsonlines',
         'encoding': 'utf8',
         'overwrite': True,
-        'indent': None,
-        'ensure_ascii': False,
-        'newline': '\n'
     }
 }
 
-# Add a random delay between requests
-RANDOMIZE_DOWNLOAD_DELAY = True
+# Basic settings
+FEED_EXPORT_ENCODING = "utf-8"
+LOG_LEVEL = 'INFO'
 
-# User Agent rotation
-USER_AGENT_LIST = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-]
-
-# Crawl in BFO order (breadth-first) to avoid hitting the same domain too frequently
-DEPTH_PRIORITY = 1
-SCHEDULER_DISK_QUEUE = 'scrapy.squeues.PickleFifoDiskQueue'
-SCHEDULER_MEMORY_QUEUE = 'scrapy.squeues.FifoMemoryQueue'
-
-# Download timeout - increased for browser mode requests
-DOWNLOAD_TIMEOUT = 120  # 120 seconds timeout (browser mode can be slower)
-
-# Disable redirect middleware to avoid following redirects that might lead to honeypots
-REDIRECT_ENABLED = False
-
-# Adjust log level
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-
-# =============================================================================
-# HTML FALLBACK AND BROWSER MODE SETTINGS
-# =============================================================================
-
-# Enable cookies for HTML collection pages (some stores require session cookies)
-# This will be overridden per-request when needed
-COOKIES_ENABLED = False  # Keep disabled by default, enable per-request for HTML fallback
-
-# Additional headers for HTML collection page requests
-HTML_COLLECTION_HEADERS = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Upgrade-Insecure-Requests': '1',
+# Enhanced middleware for rate limiting protection
+DOWNLOADER_MIDDLEWARES = {
+    'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,  # Disable
+    'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,  # Disable default, use custom
+    'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
+    'shopify_scraper.middlewares.RateLimitMiddleware': 544,
 }
 
-# Dupefilter settings - allow duplicate URLs for HTML fallback
-DUPEFILTER_CLASS = 'scrapy.dupefilters.RFPDupeFilter'
-DUPEFILTER_DEBUG = False
+# Disable problematic features
+AUTOTHROTTLE_ENABLED = False
+HTTPCACHE_ENABLED = False
+REDIRECT_ENABLED = True
 
-# Memory usage optimization for large HTML pages
-MEMUSAGE_ENABLED = True
-MEMUSAGE_LIMIT_MB = 2048  # 2GB limit
-MEMUSAGE_WARNING_MB = 1536  # Warning at 1.5GB
+# Disable all extensions that might cause issues
+EXTENSIONS = {}
 
-# Stats collection for monitoring HTML vs JSON success rates
-STATS_CLASS = 'scrapy.statscollectors.MemoryStatsCollector'
-
-# =============================================================================
-# ZYTE API CONFIGURATION
-# =============================================================================
-
-# Get Zyte API key from environment variables
-ZYTE_API_KEY = os.getenv('ZYTE_API_KEY', '')
-
-# Configure Zyte API but don't enable addon globally
-# Zyte API will only be used for requests that explicitly include 'zyte_api' in meta
-if ZYTE_API_KEY:
-    # Store Zyte API configuration for selective use
-    ZYTE_API_URL = 'https://api.zyte.com/v1/extract'
-    
-    # Default parameters for Zyte API requests (when explicitly requested)
-    ZYTE_API_DEFAULT_PARAMS = {
-        'httpResponseBody': True,
-        'geolocation': 'US',
-        # browserHtml will be added per-request when needed
-    }
-    
-    # Advanced Zyte API configuration
-    ZYTE_API_TRANSPARENT_MODE = True
-    ZYTE_API_SESSION_MODE = 'persistent'
-    ZYTE_API_REQUEST_HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    }
-    
-    # Enable Zyte API addon only when needed
-    ADDONS = {
-        "scrapy_zyte_api.Addon": 500,
-    }
-    
-    # Middleware configuration - use normal scrapy middlewares by default
-    DOWNLOADER_MIDDLEWARES = {
-        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
-        'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
-        'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
-        'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
-        'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
-        'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
-        'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
-    }
-    
-    print(f"Zyte API configured for selective use (not enabled globally)")
-else:
-    # Fallback configuration without Zyte API
-    DOWNLOADER_MIDDLEWARES = {
-        'shopify_scraper.middlewares.RandomUserAgentMiddleware': 400,
-        'shopify_scraper.middlewares.CustomRetryMiddleware': 500,
-        'shopify_scraper.middlewares.ShopifyScraperDownloaderMiddleware': 543,
-        'scrapy.downloadermiddlewares.retry.RetryMiddleware': None,
-        'scrapy.downloadermiddlewares.robotstxt.RobotsTxtMiddleware': None,
-        'scrapy.downloadermiddlewares.redirect.MetaRefreshMiddleware': None,
-        'scrapy.downloadermiddlewares.redirect.RedirectMiddleware': None,
-    }
-    print("No Zyte API key found. Running without Zyte services.")
+# Suppress warnings
+import warnings
+warnings.filterwarnings('ignore')

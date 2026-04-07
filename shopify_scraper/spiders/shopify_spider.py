@@ -2,80 +2,123 @@ import scrapy
 import json
 import os
 import time
-import random
-from urllib.parse import urljoin
-from twisted.internet import reactor
-from twisted.internet.task import deferLater
-from scrapy.exceptions import IgnoreRequest
+from datetime import datetime
 from shopify_scraper.items import ShopifyProductItem
 
 
 class ShopifySpider(scrapy.Spider):
     name = 'shopify_multi'
 
-    BATCH_SIZE = 10
-    INTER_STORE_DELAY_MIN = 60
-    INTER_STORE_DELAY_MAX = 120
-    INTER_BATCH_DELAY_MIN = 300
-    INTER_BATCH_DELAY_MAX = 600
-    
-    # Per-store resilience settings
-    MAX_STORE_FAILURES = 3  # Max consecutive failures before skipping store
-    STORE_TIMEOUT = 300     # Max time to spend on a single store (seconds)
-    MAX_PAGES_PER_STORE = 100  # Safety limit to prevent infinite loops
-
-    # Hard error statuses that should immediately trigger browser mode
-    HARD_ERROR_STATUSES = {403, 404, 429}
-
-    # Two-phase processing: lightweight first, then browser mode for failed stores
-    BROWSER_MODE_RETRY = True  # Enable browser mode retry phase
-    
-    PROGRESS_FILE = 'scraping_progress.json'
-    FAILED_STORES_FILE = 'failed_stores.json'
-
-    def __init__(self, store_url=None, batch_size=None, resume=False, stores_file=None, *args, **kwargs):
+    def __init__(self, store_url=None, stores_file=None, stores_json=None, *args, **kwargs):
         super(ShopifySpider, self).__init__(*args, **kwargs)
 
-        if batch_size:
-            self.BATCH_SIZE = int(batch_size)
-
-        self.completed_stores = set()
-        self.failed_stores = set()  # Track stores that failed too many times
-        self.store_failures = {}    # Track failure count per store
-        self.store_start_times = {} # Track when we started each store
-        self.current_batch = []
-        self.all_stores = []
-        self.browser_mode_phase = False  # Track if we're in browser mode retry phase
-        self.original_store_count = 0    # Track original number of stores
-
-        if resume and os.path.exists(self.PROGRESS_FILE):
-            self.load_progress()
-            self.logger.info(f"Resuming scrape. {len(self.completed_stores)} stores already completed.")
+        self.stores = []
+        self.store_products = {}  # Track products per store
+        self.store_status = {}    # Track status per store
+        self.failed_stores = []   # Track failures
+        self.start_time = time.time()
 
         if store_url:
-            self.all_stores = [store_url]
-            self.logger.info(f"Single store mode: Scraping {store_url}")
+            # Single store mode
+            self.stores = [store_url]
+            self.logger.info(f"Single store mode: {store_url}")
+        elif stores_json:
+            # Load from JSON string (ScrapyCloud)
+            self.load_stores_from_json_string(stores_json)
+            self.logger.info(f"Loaded {len(self.stores)} stores from JSON string")
         elif stores_file and os.path.exists(stores_file):
+            # Load from file (local development)
             self.load_stores_from_file(stores_file)
-            self.logger.info(f"Loaded {len(self.all_stores)} stores from {stores_file}")
+            self.logger.info(f"Loaded {len(self.stores)} stores from {stores_file}")
         else:
-            stores_file = 'shopify_scraper/shopify_stores.json'
-            if os.path.exists(stores_file):
-                self.load_stores_from_file(stores_file)
-                self.logger.info(f"Loaded {len(self.all_stores)} stores from {stores_file}")
+            # Hardcoded stores for ScrapyCloud (auto-generated from data/shopify_stores.json)
+            self.stores = [
+                'https://amallitalli.com',
+                'https://aligne.co',
+                'https://ajeworld.com',
+                'https://americantall.com',
+                'https://dolcevita.com',
+                'https://us.daughtersofindia.net',
+                'https://balticborn.com',
+                'https://elevatedcloset.com',
+                'https://elwoodclothing.com',
+                'https://finesse.us',
+                'https://florencebymillsfashion.com',
+                'https://girlfriend.com',
+                'https://hanifa.co',
+                'https://goodamerican.com',
+                'https://joesjeans.com',
+                'https://kaicollective.com',
+                'https://kancanusa.com',
+                'https://marcellanyc.com',
+                'https://shopnoble.com',
+                'https://nooworks.com',
+                'https://papinelle.us',
+                'https://paripassushop.com',
+                'https://thekit.com',
+                'https://universalstandard.com',
+                'https://shapellx.com',
+                'https://vailashoes.com',
+                'https://veronicabeard.com',
+                'https://shopvitality.com',
+                'https://wray.nyc',
+                'https://regent-row.com',
+                'https://100brawn.com',
+                'https://big-tall.com',
+                'https://widethebrand.com',
+                'https://shakawear.com',
+                'https://groversbigandtall.com',
+                'https://onebonebrand.com',
+                'https://westportbigandtall.com',
+                'https://paulfredrick.com',
+                'https://phixclothing.com',
+                'https://haragojaipur.us',
+                'https://studiosuits.com',
+                'https://stateandliberty.com',
+                'https://acemarks.com',
+                'https://tateandyoko.com',
+                'https://beckettsimonon.com',
+                'https://mugsyjeans.com',
+                'https://3sixteen.com',
+                'https://thegoodmanbrand.com',
+                'https://vermeshoes.com',
+                'https://parkeofficial.com',
+                'https://langessentials.com',
+                'https://tallslim.com'
+            ]
+            
+            self.logger.info(f"Using hardcoded stores: {len(self.stores)} stores")
+
+    def load_stores_from_json_string(self, json_string):
+        """Load stores from JSON string (for ScrapyCloud)"""
+        try:
+            data = json.loads(json_string)
+            
+            if isinstance(data, dict) and 'stores' in data:
+                stores = data['stores']
+            elif isinstance(data, list):
+                stores = data
             else:
-                self.all_stores = [
-                    'https://dolcevita.com',
-                   
-                ]
-                self.logger.info(f"Using default list of {len(self.all_stores)} stores")
-
-        if resume:
-            self.all_stores = [store for store in self.all_stores if store not in self.completed_stores]
-
-        self.prepare_next_batch()
+                self.logger.error(f"Unknown JSON format")
+                return
+            
+            self.stores = []
+            for store in stores:
+                store = store.rstrip('/')
+                if not store.startswith(('http://', 'https://')):
+                    store = f'https://{store}'
+                self.stores.append(store)
+                
+        except Exception as e:
+            self.logger.error(f"Error loading stores from JSON string: {e}")
+            self.stores = []
+        
+        # Mark all stores as pending
+        for store in self.stores:
+            self.store_status[store] = 'pending'
 
     def load_stores_from_file(self, file_path):
+        """Load stores from JSON file"""
         try:
             with open(file_path, 'r') as f:
                 data = json.load(f)
@@ -88,583 +131,407 @@ class ShopifySpider(scrapy.Spider):
                 self.logger.error(f"Unknown format in {file_path}")
                 return
 
-            self.all_stores = []
+            self.stores = []
             for store in stores:
                 store = store.rstrip('/')
                 if not store.startswith(('http://', 'https://')):
                     store = f'https://{store}'
-                self.all_stores.append(store)
+                self.stores.append(store)
 
         except Exception as e:
             self.logger.error(f"Error loading stores from {file_path}: {e}")
-            self.all_stores = []
-
-    def prepare_next_batch(self):
-        remaining = len(self.all_stores)
-        if remaining == 0:
-            self.logger.info("No more stores to scrape!")
-            return
-
-        batch_size = min(self.BATCH_SIZE, remaining)
-        self.current_batch = self.all_stores[:batch_size]
-        self.all_stores = self.all_stores[batch_size:]
-
-        self.logger.info(f"Prepared batch of {len(self.current_batch)} stores. {len(self.all_stores)} stores remaining.")
-
-    def load_progress(self):
+            self.stores = []
+        
+        # Mark all stores as pending
+        for store in self.stores:
+            self.store_status[store] = 'pending'
+    
+    def should_filter_product(self, product):
+        """Filter out non-physical products"""
+        title = product.get('title', '').lower()
+        product_type = product.get('product_type', '').lower()
+        tags = [tag.lower() for tag in product.get('tags', [])]
+        
+        # Non-physical product keywords
+        filter_keywords = [
+            'gift card', 'giftcard', 'gift certificate', 'giftcertificate',
+            'store credit', 'storecredit', 'donation', 'donate',
+            'sample pack', 'samplepack', 'membership', 'member',
+            'digital download', 'digitaldownload', 'e-gift', 'egift',
+            'insurance', 'warranty', 'service', 'subscription',
+            'virtual', 'online', 'digital', 'download', 'ebook',
+            'course', 'training', 'consultation', 'booking',
+            'shipping protection', 'shippingprotection', 'protection'
+        ]
+        
+        # Check title, product type, and tags
+        all_text = f"{title} {product_type} {' '.join(tags)}"
+        
+        for keyword in filter_keywords:
+            if keyword in all_text:
+                return True
+        
+        return False
+    
+    def extract_vendor_from_url(self, store_url):
+        """
+        Extract a clean vendor name from the store URL.
+        
+        Examples:
+        - https://dolcevita.com → Dolce Vita
+        - https://americantall.com → American Tall
+        - https://us.daughtersofindia.net → Daughters Of India
+        - https://100brawn.com → 100 Brawn
+        - https://wray.nyc → Wray
+        """
         try:
-            if os.path.exists(self.PROGRESS_FILE):
-                with open(self.PROGRESS_FILE, 'r') as f:
-                    data = json.load(f)
-                    self.completed_stores = set(data.get('completed_stores', []))
-        except Exception as e:
-            self.logger.error(f"Error loading progress: {e}")
-            self.completed_stores = set()
-
-    def save_progress(self):
-        try:
-            with open(self.PROGRESS_FILE, 'w') as f:
-                json.dump({
-                    'completed_stores': list(self.completed_stores),
-                    'timestamp': time.time()
-                }, f)
-        except Exception as e:
-            self.logger.error(f"Error saving progress: {e}")
-
-    def save_failed_stores(self):
-        """Save failed stores for browser mode retry"""
-        try:
-            failed_data = {
-                'failed_stores': list(self.failed_stores),
-                'store_failures': self.store_failures,
-                'timestamp': time.time(),
-                'phase': 'browser_mode_retry'
+            import re
+            
+            # Remove protocol and www
+            domain = store_url.replace('https://', '').replace('http://', '')
+            domain = domain.replace('www.', '')
+            
+            # Remove subdomain (like 'us.', 'shop.', etc.) but keep meaningful ones
+            parts = domain.split('.')
+            if len(parts) > 2:
+                # Keep the main domain part (e.g., 'daughtersofindia' from 'us.daughtersofindia.net')
+                # Skip common subdomains
+                common_subdomains = ['us', 'shop', 'store', 'www', 'en', 'uk', 'ca']
+                if parts[0].lower() in common_subdomains:
+                    domain = '.'.join(parts[1:])
+            
+            # Get just the domain name without TLD
+            domain_name = domain.split('.')[0]
+            
+            # First, replace hyphens and underscores with spaces
+            cleaned = domain_name.replace('-', ' ').replace('_', ' ')
+            
+            # Split camelCase words (e.g., "dolceVita" → "dolce Vita")
+            # This regex finds transitions from lowercase to uppercase
+            cleaned = re.sub(r'([a-z])([A-Z])', r'\1 \2', cleaned)
+            
+            # Add space between numbers and letters (e.g., "100brawn" → "100 brawn")
+            cleaned = re.sub(r'(\d+)([a-zA-Z])', r'\1 \2', cleaned)
+            
+            # Split concatenated words using a dictionary-based approach for common patterns
+            # Handle specific patterns we see in the store list
+            replacements = {
+                # Updated vendor name mappings
+                'amallitalli': 'Amalli Talli',
+                'aligne': 'Aligne',
+                'ajeworld': 'AJE',
+                'americantall': 'American Tall',
+                'dolcevita': 'Dolce Vita',
+                'daughtersofindia': 'Daughters of India',
+                'balticborn': 'Baltic Born',
+                'elevatedcloset': 'Elevated Closet',
+                'elwoodclothing': 'Elwood',
+                'finesse': 'Finesse',
+                'florencebymillsfashion': 'Florence By Mills',
+                'girlfriend': 'Girlfriend Collective',
+                'hanifa': 'Hanifa',
+                'goodamerican': 'Good American',
+                'joesjeans': 'Joe\'s Jeans',
+                'kaicollective': 'Kai Collective',
+                'kancanusa': 'Kancan',
+                'marcellanyc': 'Marcella',
+                'shopnoble': 'Noble',
+                'nooworks': 'Nooworks',
+                'papinelle': 'Papinelle',
+                'paripassushop': 'Paripassu',
+                'thekit': 'The Kit',
+                'universalstandard': 'Universal Standard',
+                'shapellx': 'Shapellx',
+                'vailashoes': 'Vaila Shoes',
+                'veronicabeard': 'Veronica Beard',
+                'shopvitality': 'Vitality',
+                'wray': 'Wray',
+                'regent-row': 'Regent Row',
+                '100brawn': '100 Brawn',
+                'hajjars': 'Hajjar\'s',
+                'widethebrand': 'Wide the Brand',
+                'shakawear': 'Shaka Wear',
+                'groversbigandtall': 'Grover & Sons',
+                'onebonebrand': 'One Bone Brand',
+                'westportbigandtall': 'Westport Big & Tall',
+                'paulfredrick': 'Paul Fredrick',
+                'phixclothing': 'Phix',
+                'haragojaipur': 'Harago',
+                'studiosuits': 'Studio Suits',
+                'stateandliberty': 'State and Liberty',
+                'acemarks': 'Ace Marks',
+                'beckettsimonon': 'Beckett Simonon',
+                'mugsyjeans': 'Mugsy Jeans',
+                '3sixteen': '3sixteen',
+                'thegoodmanbrand': 'Good Man Brand',
+                'vermeshoes': 'Vermé',
+                'parkeofficial': 'Parke',
+                'langessentials': 'Lang Essentials',
+                'tallslim': 'Tall Slim',
+                'spanx': 'Spanx',
+                'tedbaker': 'Ted Baker',
+                'eliesaab': 'Elie Saab',
+                'bigtall': 'Hajjar\'s Big Tall',
+                'big-tall': 'Hajjar\'s Big Tall',
             }
-            with open(self.FAILED_STORES_FILE, 'w') as f:
-                json.dump(failed_data, f, indent=2)
-            self.logger.info(f"Saved {len(self.failed_stores)} failed stores for browser mode retry")
+            
+            # Check if we have a known replacement
+            cleaned_lower = cleaned.lower().strip()
+            if cleaned_lower in replacements:
+                cleaned = replacements[cleaned_lower]
+            else:
+                # For unknown stores, apply smart word splitting
+                # This handles most cases automatically without needing a dictionary
+                pass
+            
+            # Title case each word
+            vendor_name = ' '.join(word.capitalize() for word in cleaned.split())
+            
+            return vendor_name
+            
         except Exception as e:
-            self.logger.error(f"Error saving failed stores: {e}")
-
-    def load_failed_stores(self):
-        """Load failed stores for browser mode retry"""
-        try:
-            if os.path.exists(self.FAILED_STORES_FILE):
-                with open(self.FAILED_STORES_FILE, 'r') as f:
-                    data = json.load(f)
-                return data.get('failed_stores', [])
-        except Exception as e:
-            self.logger.error(f"Error loading failed stores: {e}")
-        return []
-
-    def should_use_browser_mode(self, store_url):
-        """Check if we should use browser mode for this store"""
-        return self.browser_mode_phase or store_url in self.failed_stores
-
-    def start_browser_mode_retry(self):
-        """Start the browser mode retry phase for failed stores"""
-        if not self.BROWSER_MODE_RETRY or not self.failed_stores:
-            self.logger.info("No failed stores to retry with browser mode")
-            return None
-
-        self.logger.info(f"=== STARTING BROWSER MODE RETRY PHASE ===")
-        self.logger.info(f"Retrying {len(self.failed_stores)} failed stores with full browser rendering")
-        
-        # Save failed stores list
-        self.save_failed_stores()
-        
-        # Switch to browser mode phase
-        self.browser_mode_phase = True
-        
-        # Reset stores list with failed stores
-        self.all_stores = list(self.failed_stores)
-        self.failed_stores = set()  # Reset failed stores for retry
-        self.store_failures = {}    # Reset failure counts
-        
-        # Prepare first batch of failed stores
-        self.prepare_next_batch()
-        
-        if self.current_batch:
-            return self.start_next_store(0)
+            self.logger.warning(f"Could not extract vendor from URL {store_url}: {e}")
         return None
 
     def start_requests(self):
-        if not self.current_batch:
-            self.logger.info("No stores to scrape!")
-            return
-
-        store_url = self.current_batch[0]
-        phase_msg = "BROWSER MODE" if self.browser_mode_phase else "NORMAL SCRAPY"
-        self.logger.info(f"Starting with store: {store_url} ({phase_msg})")
-
-        if self.browser_mode_phase:
-            # Phase 2: Start with HTML collection page using Zyte API
-            yield self._html_listing_request(store_url, 0)
-        else:
-            # Phase 1: Start with normal Scrapy JSON request
-            page = 1
-            full_url = f"{store_url}/products.json?page={page}&limit=250"
-
-            request_meta = {
-                'dont_retry': False,
-                'max_retry_times': 5,
-                'store_url': store_url,
-            }
-
+        """Generate initial requests for all stores"""
+        for store_url in self.stores:
+            url = f"{store_url}/products.json?limit=250&page=1"
             yield scrapy.Request(
-                url=full_url,
+                url=url,
                 callback=self.parse,
-                cb_kwargs={
-                    'store_url': store_url,
-                    'page': page,
-                    'batch_index': 0
-                },
-                meta=request_meta,
+                errback=self.handle_error,  # ADD THIS
+                meta={'store_url': store_url, 'page': 1},
                 dont_filter=True
             )
 
-    def sleep(self, seconds):
-        if seconds > 45:
-            half = seconds / 2
-            self.logger.info(f"[heartbeat] Sleeping {seconds:.2f}s... pinging at {half:.2f}s to keep alive")
-            reactor.callLater(half, lambda: self.logger.info(f"[heartbeat] Still alive... {half:.0f}s left"))
-        return deferLater(reactor, seconds, lambda: None)
-
-    def should_skip_store(self, store_url):
-        """Check if we should skip a store due to failures or timeout"""
-        # Check if store has failed too many times
-        if store_url in self.failed_stores:
-            return True
-            
-        # Check failure count
-        failure_count = self.store_failures.get(store_url, 0)
-        if failure_count >= self.MAX_STORE_FAILURES:
-            self.logger.warning(f"[{store_url}] Skipping store after {failure_count} failures")
-            self.failed_stores.add(store_url)
-            return True
-            
-        # Check timeout
-        if store_url in self.store_start_times:
-            elapsed = time.time() - self.store_start_times[store_url]
-            if elapsed > self.STORE_TIMEOUT:
-                self.logger.warning(f"[{store_url}] Skipping store after timeout ({elapsed:.1f}s)")
-                self.failed_stores.add(store_url)
-                return True
-                
-        return False
-
-    def record_store_failure(self, store_url, error_msg="", hard=False):
-        """Record a failure for a store"""
-        self.store_failures[store_url] = self.store_failures.get(store_url, 0) + 1
-        failure_count = self.store_failures[store_url]
-        self.logger.warning(f"[{store_url}] Store failure #{failure_count}: {error_msg}")
+    def handle_error(self, failure):
+        """Handle request failures"""
+        store_url = failure.request.meta.get('store_url', 'unknown')
+        self.logger.error(f"❌ [{store_url}] Request failed: {failure.value}")
         
-        if hard or failure_count >= self.MAX_STORE_FAILURES:
-            self.logger.error(f"[{store_url}] Store marked as failed (hard={hard})")
-            self.failed_stores.add(store_url)
+        # Track failed store
+        self.failed_stores.append({
+            'store': store_url,
+            'error': str(failure.value),
+            'type': failure.type.__name__
+        })
+        self.store_status[store_url] = 'failed'
 
-    def mark_store_completed(self, store_url):
-        """Mark a store as successfully completed"""
-        self.completed_stores.add(store_url)
-        # Clean up tracking data
-        self.store_failures.pop(store_url, None)
-        self.store_start_times.pop(store_url, None)
-        self.save_progress()
-        self.logger.info(f"[{store_url}] Store completed successfully")
-
-    def _html_listing_request(self, store_url, batch_index, page_url=None):
-        """Create a browser mode request for HTML collection page fallback"""
-        url = page_url or f"{store_url}/collections/all"
-        self.logger.info(f"[{store_url}] Creating HTML collection fallback request: {url}")
+    def parse(self, response):
+        """Parse products.json response"""
+        store_url = response.meta['store_url']
+        page = response.meta['page']
         
-        return scrapy.Request(
-            url=url,
-            callback=self.parse_collection_html,
-            cb_kwargs={'store_url': store_url, 'batch_index': batch_index},
-            meta={
-                'store_url': store_url,
-                '_html_fallback_tried': True,
-                'zyte_api': {'browserHtml': True, 'geolocation': 'US'},
-                'dont_retry': False,
-            },
-            dont_filter=True
-        )
-
-    def _product_json_or_html(self, product_url, store_url):
-        """Try product.json first, fallback to HTML parsing"""
-        product_json = product_url.rstrip('/') + '.json'
-        return scrapy.Request(
-            url=product_json,
-            callback=self.parse_product_json,
-            errback=lambda f: self._product_html_request(product_url, store_url),
-            meta={'store_url': store_url, 'zyte_api': {'browserHtml': True, 'geolocation': 'US'}},
-            dont_filter=True
-        )
-
-    def _product_html_request(self, product_url, store_url):
-        """Create a browser mode request for individual product HTML parsing"""
-        return scrapy.Request(
-            url=product_url,
-            callback=self.parse_product_html,
-            meta={'store_url': store_url, 'zyte_api': {'browserHtml': True, 'geolocation': 'US'}},
-            dont_filter=True
-        )
-
-
-    def parse(self, response, store_url, page, batch_index):
-        # Check if we should skip this store due to failures or timeout
-        if self.should_skip_store(store_url):
-            self.logger.warning(f"[{store_url}] Skipping store due to previous failures or timeout")
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-            return
-
-        # Track store start time on first page
-        if page == 1 and store_url not in self.store_start_times:
-            self.store_start_times[store_url] = time.time()
-
-        # Safety check for infinite loops
-        if page > self.MAX_PAGES_PER_STORE:
-            self.logger.warning(f"[{store_url}] Reached max pages limit ({self.MAX_PAGES_PER_STORE}), completing store")
-            self.mark_store_completed(store_url)
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-            return
-
         try:
-            # Check for error responses
-            if response.status >= 400:
-                error_msg = f"HTTP {response.status}"
-                if response.status == 429:
-                    error_msg += " (Rate Limited)"
-                elif response.status == 403:
-                    error_msg += " (Forbidden)"
-                elif response.status == 404:
-                    error_msg += " (Not Found - may not be a Shopify store)"
-                
-                # Record failure and move to next store
-                # Hard errors will be retried with Zyte API in Phase 2
-                if response.status in self.HARD_ERROR_STATUSES:
-                    self.record_store_failure(store_url, error_msg, hard=True)
-                    self.logger.info(f"[{store_url}] Hard error {response.status}, will retry with Zyte API in Phase 2")
-                else:
-                    self.record_store_failure(store_url, error_msg)
-                
-                next_req = self.process_next_store(batch_index)
-                if next_req:
-                    next_req.addCallback(self.schedule_next_request)
-                return
-
             data = response.json()
             products = data.get('products', [])
 
-            self.logger.info(f"[{store_url}] Processing page {page} with {len(products)} products")
-
-            if not products:
-                self.logger.info(f"[{store_url}] No more products found on page {page}. Done with this store.")
-                self.mark_store_completed(store_url)
-                next_req = self.process_next_store(batch_index)
-                if next_req:
-                    next_req.addCallback(self.schedule_next_request)
-                return
-
+            # Track products
+            if store_url not in self.store_products:
+                self.store_products[store_url] = 0
+            self.store_products[store_url] += len(products)
+            
+            # Mark as in progress
+            self.store_status[store_url] = 'in_progress'
+            
+            self.logger.info(f"[{store_url}] Page {page}: {len(products)} products")
+            
+            # Initialize quality tracking
+            if not hasattr(self, 'quality_issues'):
+                self.quality_issues = {
+                    'no_images': 0,
+                    'no_variants': 0,
+                    'no_price': 0,
+                    'filtered_non_physical': 0
+                }
+            
+            # Process each product
             for product in products:
+                # Filter out non-physical products
+                if self.should_filter_product(product):
+                    self.quality_issues['filtered_non_physical'] += 1
+                    continue
                 item = ShopifyProductItem()
                 item['store'] = store_url
                 item['id'] = product.get('id')
                 item['title'] = product.get('title')
                 item['handle'] = product.get('handle')
                 item['vendor'] = product.get('vendor')
+                item['vendor_clean'] = self.extract_vendor_from_url(store_url)
                 item['product_type'] = product.get('product_type')
-                item['tags'] = product.get('tags')
-                item['variants'] = product.get('variants')
-                item['images'] = product.get('images')  # Keep original images array
+                # item['tags'] = product.get('tags')  # Removed - not used in downstream processing
+                item['variants'] = product.get('variants', [])
+                item['images'] = product.get('images', [])
                 item['body_html'] = product.get('body_html')
                 
-                # Extract up to 4 individual image URLs
+                # Create product URL
+                if item['handle']:
+                    item['product_url'] = f"{store_url}/products/{item['handle']}"
+                
+                # Extract individual image URLs (up to 4)
                 images = product.get('images', [])
                 item['image_url'] = images[0].get('src') if len(images) > 0 else None
                 item['image_url_2'] = images[1].get('src') if len(images) > 1 else None
                 item['image_url_3'] = images[2].get('src') if len(images) > 2 else None
                 item['image_url_4'] = images[3].get('src') if len(images) > 3 else None
                 
+                # Price information removed - using individual variant prices in flatten_lambda instead
+                
+                # Track data quality issues
+                if not item.get('image_url'):
+                    self.quality_issues['no_images'] += 1
+                    self.logger.warning(f"⚠️ Product {item['id']} has no images")
+                
+                if not item.get('variants'):
+                    self.quality_issues['no_variants'] += 1
+                
+                # Check if any variant has a price
+                has_price = any(v.get('price') for v in item.get('variants', []))
+                if not has_price:
+                    self.quality_issues['no_price'] += 1
+                
                 yield item
-
-            # Continue to next page
-            next_page = page + 1
-            next_url = f"{store_url}/products.json?page={next_page}&limit=250"
-
-            self.logger.info(f"[{store_url}] Queuing next page {next_page}")
-
-            # Create request meta with browser mode if needed
-            request_meta = {
-                'dont_retry': False,
-                'max_retry_times': 3,  # Reduced retries per page
-                'store_url': store_url,  # Pass store_url in meta for middleware
-            }
             
-            # Add Zyte API browser mode if needed
-            if self.should_use_browser_mode(store_url):
-                request_meta['zyte_api'] = {
-                    'browserHtml': True,
-                    'geolocation': 'US',
-                }
-
-            yield scrapy.Request(
-                url=next_url,
-                callback=self.parse,
-                cb_kwargs={
-                    'store_url': store_url,
-                    'page': next_page,
-                    'batch_index': batch_index
-                },
-                meta=request_meta,
-                dont_filter=True
-            )
-
-        except (ValueError, KeyError, TypeError) as e:
-            # JSON parsing or data structure errors
-            error_msg = f"Data parsing error on page {page}: {str(e)}"
-            self.logger.error(f"[{store_url}] {error_msg}")
-            self.record_store_failure(store_url, error_msg)
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-        except Exception as e:
-            # Any other unexpected errors
-            error_msg = f"Unexpected error on page {page}: {str(e)}"
-            self.logger.error(f"[{store_url}] {error_msg}")
-            self.record_store_failure(store_url, error_msg)
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-
-
-    def schedule_next_request(self, request):
-            if request:
-                self.logger.info(f"Scheduling next request: {request.url}")
-                self.crawler.engine.crawl(request, self)
-
-    def process_next_store(self, current_index):
-            next_index = current_index + 1
-
-            if next_index >= len(self.current_batch):
-                if self.all_stores:
-                    batch_delay = random.uniform(self.INTER_BATCH_DELAY_MIN, self.INTER_BATCH_DELAY_MAX)
-                    self.logger.info(f"Batch completed. Waiting {batch_delay:.2f}s before starting next batch...")
-
-                    d = self.sleep(batch_delay)
-                    d.addCallback(lambda _: self.prepare_next_batch_and_start())
-                    return d  # ✅ Return the deferred so Scrapy keeps running
-
-                # Check if we should start browser mode retry phase
-                if not self.browser_mode_phase and self.failed_stores and self.BROWSER_MODE_RETRY:
-                    self.logger.info(f"=== PHASE 1 COMPLETE ===")
-                    self.logger.info(f"Completed: {len(self.completed_stores)} stores")
-                    self.logger.info(f"Failed: {len(self.failed_stores)} stores")
-                    
-                    # Start browser mode retry
-                    return self.start_browser_mode_retry()
-                
-                # All processing complete
-                total_completed = len(self.completed_stores)
-                total_failed = len(self.failed_stores)
-                phase_msg = "BROWSER MODE RETRY" if self.browser_mode_phase else "LIGHTWEIGHT MODE"
-                
-                self.logger.info(f"=== {phase_msg} COMPLETE ===")
-                self.logger.info(f"Final Results - Completed: {total_completed}, Failed: {total_failed}")
-                
-                if self.browser_mode_phase:
-                    self.logger.info("All processing phases complete!")
-                else:
-                    self.logger.info("Lightweight phase complete. No browser mode retry needed.")
-                
-                return None
-
-            return self.start_next_store(next_index)
-
-
-    def prepare_next_batch_and_start(self):
-        self.prepare_next_batch()
-        if self.current_batch:
-            return self.start_next_store(0)
-        return None
-
-    def start_next_store(self, batch_index):
-        if batch_index < len(self.current_batch):
-            store_url = self.current_batch[batch_index]
-            
-            # Check if we should skip this store
-            if self.should_skip_store(store_url):
-                self.logger.warning(f"[{store_url}] Skipping store due to previous failures or timeout")
-                return self.start_next_store(batch_index + 1)  # Skip to next store
-            
-            store_delay = random.uniform(self.INTER_STORE_DELAY_MIN, self.INTER_STORE_DELAY_MAX)
-            phase_msg = "BROWSER MODE" if self.browser_mode_phase else "NORMAL SCRAPY"
-            self.logger.info(f"Moving to next store: {store_url} ({phase_msg}). Waiting {store_delay:.2f}s...")
-
-            def create_request(_):
-                if self.browser_mode_phase:
-                    # Phase 2: Use HTML collection page with Zyte API browser mode
-                    return self._html_listing_request(store_url, batch_index)
-                else:
-                    # Phase 1: Use normal Scrapy with JSON endpoint
-                    request_meta = {
-                        'dont_retry': False,
-                        'max_retry_times': 5,
-                        'store_url': store_url,  # Pass store_url in meta for middleware
-                    }
-                    
-                    return scrapy.Request(
-                        url=f"{store_url}/products.json?page=1&limit=250",
+            # Continue to next page if products were found
+            if products:
+                next_page = page + 1
+                next_url = f"{store_url}/products.json?limit=250&page={next_page}"
+                yield scrapy.Request(
+                    url=next_url,
                         callback=self.parse,
-                        cb_kwargs={
-                            'store_url': store_url,
-                            'page': 1,
-                            'batch_index': batch_index
-                        },
-                        meta=request_meta,
+                    errback=self.handle_error,
+                    meta={'store_url': store_url, 'page': next_page},
                         dont_filter=True
                     )
+            else:
+                # Store completed
+                self.store_status[store_url] = 'completed'
+                self.logger.info(
+                    f"✅ [{store_url}] COMPLETED - "
+                    f"{self.store_products[store_url]} products"
+                )
+                
+        except Exception as e:
+            self.logger.error(f"❌ [{store_url}] Error parsing page {page}: {e}")
+            self.store_status[store_url] = 'failed'
+            self.failed_stores.append({
+                'store': store_url,
+                'error': str(e),
+                'page': page
+            })
 
-            d = self.sleep(store_delay)
-            d.addCallback(create_request).addCallback(self.schedule_next_request)
-            return d
-        return None
-
-    def parse_collection_html(self, response, store_url, batch_index):
-        """Parse HTML collection page to extract product links"""
-        self.logger.info(f"[{store_url}] Parsing HTML collection page: {response.url}")
+    def closed(self, reason):
+        """Generate detailed summary when spider closes"""
+        duration = time.time() - self.start_time
         
-        # Very forgiving CSS/XPath for Shopify product tiles
-        links = set(response.css('a[href*="/products/"]::attr(href)').getall())
-        if not links:
-            self.logger.warning(f"[{store_url}] No product links found in HTML collection page")
-            self.record_store_failure(store_url, "No product links in HTML", hard=True)
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-            return
-
-        self.logger.info(f"[{store_url}] HTML fallback: found {len(links)} product links")
+        # Calculate stats
+        completed = [s for s, status in self.store_status.items() if status == 'completed']
+        failed = [s for s, status in self.store_status.items() if status == 'failed']
+        pending = [s for s, status in self.store_status.items() if status == 'pending']
+        total_products = sum(self.store_products.values())
         
-        # Process each product link
-        for href in links:
-            # Clean up the URL (remove query parameters)
-            url = response.urljoin(href.split('?')[0])
-            yield self._product_json_or_html(url, store_url)
-
-        # Optional: follow pagination if present
-        next_href = response.css('a[rel="next"]::attr(href), a.pagination__next::attr(href)').get()
-        if next_href:
-            self.logger.info(f"[{store_url}] Found pagination, following to next page")
-            yield self._html_listing_request(store_url, batch_index, response.urljoin(next_href))
-        else:
-            # No more pages, mark store as completed
-            self.logger.info(f"[{store_url}] HTML collection parsing complete")
-            self.mark_store_completed(store_url)
-            next_req = self.process_next_store(batch_index)
-            if next_req:
-                next_req.addCallback(self.schedule_next_request)
-
-    def parse_product_json(self, response):
-        """Parse individual product JSON endpoint"""
-        store_url = response.meta['store_url']
+        # Create detailed report
+        report = {
+            'run_info': {
+                'completed_at': datetime.now().isoformat(),
+                'duration_minutes': round(duration / 60, 1),
+                'reason': reason
+            },
+            'summary': {
+                'total_stores': len(self.stores),
+                'completed': len(completed),
+                'failed': len(failed),
+                'pending': len(pending),
+                'total_products': total_products,
+                'avg_products_per_store': round(total_products / len(completed), 1) if completed else 0
+            },
+            'store_details': {
+                store: {
+                    'status': self.store_status.get(store, 'unknown'),
+                    'products': self.store_products.get(store, 0)
+                } for store in self.stores
+            },
+            'failed_stores': self.failed_stores
+        }
         
+        # Add quality issues to report
+        if hasattr(self, 'quality_issues'):
+            report['quality_issues'] = self.quality_issues
+        
+        # Log summary
+        self.logger.info("=" * 80)
+        self.logger.info("SCRAPE SUMMARY")
+        self.logger.info("=" * 80)
+        self.logger.info(f"Duration: {report['run_info']['duration_minutes']} minutes")
+        self.logger.info(f"Total Stores: {report['summary']['total_stores']}")
+        self.logger.info(f"✅ Completed: {report['summary']['completed']}")
+        self.logger.info(f"❌ Failed: {report['summary']['failed']}")
+        self.logger.info(f"⏸️  Pending: {report['summary']['pending']}")
+        self.logger.info(f"📦 Total Products: {report['summary']['total_products']}")
+        self.logger.info(f"📊 Avg Products/Store: {report['summary']['avg_products_per_store']}")
+        
+        if completed:
+            self.logger.info("")
+            self.logger.info("COMPLETED STORES:")
+            self.logger.info("-" * 80)
+            for store in sorted(completed):
+                count = self.store_products.get(store, 0)
+                self.logger.info(f"  ✅ {store}: {count} products")
+        
+        if failed:
+            self.logger.info("")
+            self.logger.info("FAILED STORES:")
+            self.logger.info("-" * 80)
+            for store in failed:
+                failure_info = next((f for f in self.failed_stores if f['store'] == store), {})
+                error = failure_info.get('error', 'Unknown error')
+                self.logger.info(f"  ❌ {store}: {error}")
+        
+        if pending:
+            self.logger.info("")
+            self.logger.info("PENDING STORES (never started):")
+            self.logger.info("-" * 80)
+            for store in pending:
+                self.logger.info(f"  ⏸️  {store}")
+        
+        # Data quality issues
+        if hasattr(self, 'quality_issues'):
+            self.logger.info("")
+            self.logger.info("DATA QUALITY ISSUES:")
+            self.logger.info("-" * 80)
+            self.logger.info(f"  Products missing images: {self.quality_issues['no_images']}")
+            self.logger.info(f"  Products missing variants: {self.quality_issues['no_variants']}")
+            self.logger.info(f"  Products missing prices: {self.quality_issues['no_price']}")
+            self.logger.info(f"  Non-physical products filtered: {self.quality_issues['filtered_non_physical']}")
+        
+        self.logger.info("=" * 80)
+        
+        # Save report as JSON (locally - ScrapyCloud will have it in logs)
+        report_file = f"scrape_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         try:
-            data = response.json().get('product', {})
-            if not data:
-                # Drop into HTML parsing for this product
-                prod_url = response.url.rsplit('.json', 1)[0]
-                self.logger.info(f"[{store_url}] Product JSON empty, trying HTML: {prod_url}")
-                yield self._product_html_request(prod_url, store_url)
-                return
-
-            # Successfully got product data from JSON
-            yield from self._yield_shopify_item(store_url, data)
+            with open(report_file, 'w') as f:
+                json.dump(report, f, indent=2)
+            self.logger.info(f"📄 Report saved to {report_file}")
+        except Exception as e:
+            self.logger.warning(f"Could not save report file: {e}")
+        
+        # Create failed stores file for easy retry
+        if self.failed_stores:
+            failed_urls = [f['store'] for f in self.failed_stores]
+            retry_file = {
+                'stores': failed_urls,
+                'metadata': {
+                    'original_run': datetime.now().isoformat(),
+                    'reason': 'retry_failed_stores',
+                    'failed_count': len(failed_urls)
+                }
+            }
             
-        except (ValueError, KeyError, TypeError) as e:
-            # JSON parsing failed, try HTML
-            prod_url = response.url.rsplit('.json', 1)[0]
-            self.logger.warning(f"[{store_url}] Product JSON parsing failed, trying HTML: {str(e)}")
-            yield self._product_html_request(prod_url, store_url)
-
-    def parse_product_html(self, response):
-        """Parse individual product HTML page for embedded JSON"""
-        store_url = response.meta['store_url']
-        self.logger.info(f"[{store_url}] Parsing product HTML: {response.url}")
-        
-        # Try common embedded JSON locations
-        json_candidates = response.css('script[type="application/ld+json"]::text').getall()
-        
-        for txt in json_candidates:
             try:
-                ld = json.loads(txt)
-                if isinstance(ld, dict) and ld.get('@type') in ('Product', 'product'):
-                    # Map LD+JSON to Shopify item structure (best-effort)
-                    data = {
-                        'id': ld.get('sku') or ld.get('productID') or None,
-                        'title': ld.get('name'),
-                        'vendor': ld.get('brand', {}).get('name') if isinstance(ld.get('brand'), dict) else ld.get('brand'),
-                        'images': [{'src': i} for i in (ld.get('image') if isinstance(ld.get('image'), list) else [ld.get('image')]) if i],
-                        'body_html': ld.get('description'),
-                        'product_type': ld.get('category'),
-                        'tags': None,
-                        'variants': [],
-                        'handle': response.url.rstrip('/').split('/products/')[-1],
-                    }
-                    
-                    # Try to extract price from offers
-                    offers = ld.get('offers', {})
-                    if offers and isinstance(offers, dict):
-                        price = offers.get('price')
-                        if price:
-                            data['variants'] = [{'price': price}]
-                    
-                    yield from self._yield_shopify_item(store_url, data)
-                    return
-                    
+                with open('failed_stores_retry.json', 'w') as f:
+                    json.dump(retry_file, f, indent=2)
+                self.logger.info(f"📄 Failed stores saved to failed_stores_retry.json")
+                self.logger.info(f"To retry: scrapy crawl shopify_multi -a stores_file=failed_stores_retry.json")
             except Exception as e:
-                self.logger.debug(f"[{store_url}] Failed to parse LD+JSON: {str(e)}")
-                continue
-        
-        # Try to find Shopify's embedded product JSON
-        script_texts = response.css('script:contains("var meta")::text, script:contains("window.ShopifyAnalytics")::text').getall()
-        for script_text in script_texts:
-            try:
-                # Look for product data in various Shopify script patterns
-                if 'product' in script_text.lower():
-                    # This is a simplified approach - in practice you might need more sophisticated parsing
-                    self.logger.debug(f"[{store_url}] Found potential Shopify script, but parsing not implemented")
-                    break
-            except Exception:
-                continue
-        
-        # If we get here, we couldn't parse the product
-        self.logger.warning(f"[{store_url}] No parsable product JSON found in HTML: {response.url}")
-        self.record_store_failure(store_url, "No parsable product JSON in HTML")
-
-    def _yield_shopify_item(self, store_url, data):
-        """Helper to create and yield a ShopifyProductItem from product data"""
-        item = ShopifyProductItem()
-        item['store'] = store_url
-        item['id'] = data.get('id')
-        item['title'] = data.get('title')
-        item['handle'] = data.get('handle')
-        item['vendor'] = data.get('vendor')
-        item['product_type'] = data.get('product_type')
-        item['tags'] = data.get('tags')
-        item['variants'] = data.get('variants', [])
-        item['images'] = data.get('images', [])
-        item['body_html'] = data.get('body_html')
-        
-        # Extract up to 4 individual image URLs
-        images = data.get('images', [])
-        item['image_url'] = images[0].get('src') if len(images) > 0 else None
-        item['image_url_2'] = images[1].get('src') if len(images) > 1 else None
-        item['image_url_3'] = images[2].get('src') if len(images) > 2 else None
-        item['image_url_4'] = images[3].get('src') if len(images) > 3 else None
-        
-        yield item
+                self.logger.warning(f"Could not save failed stores file: {e}")

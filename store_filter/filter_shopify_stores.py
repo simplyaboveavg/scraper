@@ -48,7 +48,7 @@ def filter_domains(input_file, shopify_file, non_shopify_file):
 # ---- Run this script ----
 if __name__ == "__main__":
     filter_domains(
-        input_file="master_store_list.txt",
-        shopify_file="shopify_stores.json",
-        non_shopify_file="non_shopify_stores.json"
+        input_file="data/master_store_list.txt",
+        shopify_file="data/shopify_stores.json",
+        non_shopify_file="data/non_shopify_stores.json"
     )
