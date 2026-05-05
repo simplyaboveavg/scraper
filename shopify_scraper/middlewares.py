@@ -160,23 +160,35 @@ class ShopifyScraperDownloaderMiddleware:
         # Check for rate limiting or blocking responses
         if response.status in [403, 429]:
             spider.logger.warning(f"Rate limited or blocked at {request.url} (status: {response.status})")
-            
+
             # If this is a robots.txt request, skip it
             if request.url.endswith('/robots.txt'):
                 raise IgnoreRequest(f"Skipping robots.txt request that returned {response.status}")
-                
+
+            # Cap retries so a persistently blocked store doesn't loop forever
+            max_retries = spider.settings.getint('RETRY_TIMES', 3)
+            retry_count = request.meta.get('retry_times', 0)
+            if retry_count >= max_retries:
+                spider.logger.error(
+                    f"Giving up on {request.url} after {retry_count} retries (status: {response.status})"
+                )
+                return response
+
             # For other requests, retry with a longer delay
             # Get custom retry delay settings
             min_delay = spider.settings.getint('RETRY_DELAY_MIN', 10)
             max_delay = spider.settings.getint('RETRY_DELAY_MAX', 60)
-            
+
             # For rate limiting, use a longer delay
             retry_delay = random.uniform(max_delay, max_delay * 2)
-            spider.logger.info(f"Rate limited. Waiting {retry_delay:.2f} seconds before retrying...")
+            spider.logger.info(
+                f"Rate limited. Waiting {retry_delay:.2f}s before retry {retry_count + 1}/{max_retries}..."
+            )
             time.sleep(retry_delay)
-            
+
             # Create a new request with different headers
             new_request = request.copy()
+            new_request.meta['retry_times'] = retry_count + 1
             # Add or update headers to look more like a browser
             new_request.headers['User-Agent'] = random.choice(spider.settings.get('USER_AGENT_LIST', []))
             new_request.headers['Accept-Language'] = 'en-US,en;q=0.9'
@@ -185,7 +197,7 @@ class ShopifyScraperDownloaderMiddleware:
             new_request.headers['Upgrade-Insecure-Requests'] = '1'
             new_request.headers['Cache-Control'] = 'max-age=0'
             new_request.dont_filter = True
-            
+
             return new_request
 
         # Must either;
@@ -204,22 +216,34 @@ class ShopifyScraperDownloaderMiddleware:
         # If it's an IgnoreRequest exception, just pass it through
         if isinstance(exception, IgnoreRequest):
             return None
-            
+
+        # Cap retries so transient errors don't loop forever
+        max_retries = spider.settings.getint('RETRY_TIMES', 3)
+        retry_count = request.meta.get('retry_times', 0)
+        if retry_count >= max_retries:
+            spider.logger.error(
+                f"Giving up on {request.url} after {retry_count} retries: {exception}"
+            )
+            return None
+
         # For other exceptions, wait and retry
         # Get custom retry delay settings
         min_delay = spider.settings.getint('RETRY_DELAY_MIN', 10)
         max_delay = spider.settings.getint('RETRY_DELAY_MAX', 60)
-        
+
         # Use a random delay between min and max
         retry_delay = random.uniform(min_delay, max_delay)
-        spider.logger.info(f"Exception occurred. Waiting {retry_delay:.2f} seconds before retrying...")
+        spider.logger.info(
+            f"Exception occurred. Waiting {retry_delay:.2f}s before retry {retry_count + 1}/{max_retries}..."
+        )
         time.sleep(retry_delay)
-        
+
         # Create a new request with different headers
         new_request = request.copy()
+        new_request.meta['retry_times'] = retry_count + 1
         new_request.headers['User-Agent'] = random.choice(spider.settings.get('USER_AGENT_LIST', []))
         new_request.dont_filter = True
-        
+
         return new_request
 
     def spider_opened(self, spider):
